@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Whiteboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #1a1a1f;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'DM Mono', monospace;
+    gap: 0;
+  }
+
+  #toolbar {
+    width: 642px;
+    background: #111115;
+    border: 1px solid #2e2e38;
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-label {
+    color: #555;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-right: 2px;
+  }
+
+  .color-swatches {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+    position: relative;
+  }
+
+  .swatch:hover { transform: scale(1.2); }
+  .swatch.active {
+    border-color: #fff;
+    transform: scale(1.15);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+  }
+
+  .divider {
+    width: 1px;
+    height: 22px;
+    background: #2e2e38;
+    margin: 0 4px;
+  }
+
+  .size-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .size-btn {
+    background: #1e1e26;
+    border: 1px solid #2e2e38;
+    border-radius: 4px;
+    color: #aaa;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    letter-spacing: 0.05em;
+  }
+
+  .size-btn:hover { background: #2a2a35; color: #fff; }
+  .size-btn.active {
+    background: #2e2e40;
+    border-color: #5566ff;
+    color: #aab0ff;
+  }
+
+  .eraser-btn {
+    background: #1e1e26;
+    border: 1px solid #2e2e38;
+    border-radius: 4px;
+    color: #aaa;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    letter-spacing: 0.05em;
+    margin-left: auto;
+  }
+
+  .eraser-btn:hover { background: #2a2a35; color: #fff; }
+  .eraser-btn.active {
+    background: #2e2e40;
+    border-color: #ff5577;
+    color: #ff8899;
+  }
+
+  .clear-btn {
+    background: #1e1e26;
+    border: 1px solid #2e2e38;
+    border-radius: 4px;
+    color: #aaa;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+
+  .clear-btn:hover { background: #2a2a35; color: #fff; border-color: #555; }
+  .clear-btn:active { transform: scale(0.97); }
+
+  #canvas-wrap {
+    position: relative;
+    line-height: 0;
+  }
+
+  canvas {
+    border: 1px solid #2e2e38;
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+    display: block;
+    cursor: crosshair;
+    background: #ffffff;
+  }
+
+  #cursor-dot {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0.7;
+    mix-blend-mode: multiply;
+    transition: width 0.1s, height 0.1s;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="toolbar-label">Color</span>
+  <div class="color-swatches" id="swatches"></div>
+  <div class="divider"></div>
+  <span class="toolbar-label">Size</span>
+  <div class="size-group" id="sizes"></div>
+  <div class="divider"></div>
+  <button class="eraser-btn" id="eraserBtn">⌫ Eraser</button>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="board" width="640" height="480"></canvas>
+  <div id="cursor-dot"></div>
+</div>
+
+<script>
+const canvas = document.getElementById("board")
+const ctx = canvas.getContext("2d")
+const cursorDot = document.getElementById("cursor-dot")
+
+// ── WebSocket ──────────────────────────────────────────────
+const ws = new WebSocket("ws://localhost:8080/ws")
+let grid = []
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data)
+  if (Array.isArray(data[0])) {
+    grid = data
+    drawFullGrid()
+    return
+  }
+  const [x, y, value] = data
+  grid[x][y] = value
+  drawServerPixel(x, y, value)
+}
+
+// value is an integer: 0 = white/erased, 1–9 = color index
+function drawServerPixel(x, y, value) {
+  ctx.fillStyle = colorFromIndex(value)
+  ctx.fillRect(x, y, 1, 1)
+}
+
+function drawFullGrid() {
+  for (let x = 0; x < 640; x++)
+    for (let y = 0; y < 480; y++)
+      drawServerPixel(x, y, grid[x][y])
+}
+
+// ── Color palette ─────────────────────────────────────────
+// Index 0 = erased/white (background). Colors start at index 1.
+const COLORS = [
+  { hex: "#ffffff", label: "White"     },  // 0 — erase / background
+  { hex: "#1a1a2e", label: "Midnight"  },  // 1
+  { hex: "#e63946", label: "Red"       },  // 2
+  { hex: "#f4a261", label: "Orange"    },  // 3
+  { hex: "#f1c40f", label: "Yellow"    },  // 4
+  { hex: "#2ecc71", label: "Green"     },  // 5
+  { hex: "#0077b6", label: "Blue"      },  // 6
+  { hex: "#9b59b6", label: "Purple"    },  // 7
+  { hex: "#e91e8c", label: "Pink"      },  // 8
+  { hex: "#00b4d8", label: "Cyan"      },  // 9
+]
+
+// Quick lookup: integer → hex
+function colorFromIndex(i) {
+  return (COLORS[i] || COLORS[0]).hex
+}
+
+const SIZES = [
+  { px: 1, label: "1px" },
+  { px: 3, label: "3px" },
+  { px: 6, label: "6px" },
+  { px: 12, label: "12px"},
+]
+
+let currentColorIndex = 1  // integer index into COLORS; 0 = white/erase
+let currentSize  = 3
+let isEraser     = false
+
+// Build swatches — skip index 0 (white is the erase/background value)
+const swatchContainer = document.getElementById("swatches")
+COLORS.forEach((c, i) => {
+  if (i === 0) return
+  const s = document.createElement("div")
+  s.className = "swatch" + (i === 1 ? " active" : "")
+  s.style.background = c.hex
+  s.dataset.colorIndex = i
+  s.title = c.label
+  s.addEventListener("click", () => {
+    document.querySelectorAll(".swatch").forEach(x => x.classList.remove("active"))
+    s.classList.add("active")
+    currentColorIndex = i
+    isEraser = false
+    document.getElementById("eraserBtn").classList.remove("active")
+    updateCursor()
+  })
+  swatchContainer.appendChild(s)
+})
+
+// Build size buttons
+const sizeContainer = document.getElementById("sizes")
+SIZES.forEach((sz, i) => {
+  const b = document.createElement("button")
+  b.className = "size-btn" + (i === 1 ? " active" : "")
+  b.textContent = sz.label
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".size-btn").forEach(x => x.classList.remove("active"))
+    b.classList.add("active")
+    currentSize = sz.px
+    updateCursor()
+  })
+  sizeContainer.appendChild(b)
+})
+
+// Eraser
+document.getElementById("eraserBtn").addEventListener("click", () => {
+  isEraser = !isEraser
+  document.getElementById("eraserBtn").classList.toggle("active", isEraser)
+  document.querySelectorAll(".swatch").forEach(x => x.classList.remove("active"))
+  updateCursor()
+})
+
+
+// ── Cursor dot ────────────────────────────────────────────
+function updateCursor() {
+  const size = currentSize + 4
+  cursorDot.style.width  = size + "px"
+  cursorDot.style.height = size + "px"
+  cursorDot.style.background = isEraser ? "rgba(200,200,200,0.8)" : colorFromIndex(currentColorIndex)
+  cursorDot.style.border = isEraser ? "1.5px solid #999" : "1.5px solid rgba(0,0,0,0.2)"
+}
+updateCursor()
+
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect()
+  cursorDot.style.left = (e.clientX - rect.left) + "px"
+  cursorDot.style.top  = (e.clientY - rect.top)  + "px"
+  cursorDot.style.display = "block"
+})
+canvas.addEventListener("mouseleave", () => { cursorDot.style.display = "none" })
+
+// ── Drawing ───────────────────────────────────────────────
+let isDrawing = false
+let lastX = null, lastY = null
+
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect()
+  if (e.touches) {
+    return {
+      x: e.touches[0].clientX - rect.left,
+      y: e.touches[0].clientY - rect.top
+    }
+  }
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+}
+
+function paintLine(x0, y0, x1, y1) {
+  ctx.save()
+  ctx.strokeStyle = isEraser ? "#ffffff" : colorFromIndex(currentColorIndex)
+  ctx.lineWidth   = currentSize
+  ctx.lineCap     = "round"
+  ctx.lineJoin    = "round"
+  ctx.globalCompositeOperation = isEraser ? "source-over" : "source-over"
+  ctx.beginPath()
+  ctx.moveTo(x0, y0)
+  ctx.lineTo(x1, y1)
+  ctx.stroke()
+  ctx.restore()
+
+  // Send pixel updates for the drawn segment via WS
+  sendSegmentPixels(x0, y0, x1, y1)
+}
+
+function paintDot(x, y) {
+  ctx.save()
+  ctx.fillStyle = isEraser ? "#ffffff" : colorFromIndex(currentColorIndex)
+  ctx.beginPath()
+  ctx.arc(x, y, currentSize / 2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+  sendSegmentPixels(x, y, x, y)
+}
+
+// Bresenham interpolation for WS pixel sends
+function sendSegmentPixels(x0, y0, x1, y1) {
+  x0 = Math.round(x0); y0 = Math.round(y0)
+  x1 = Math.round(x1); y1 = Math.round(y1)
+  const r = currentSize / 2
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1
+  let err = dx - dy, cx = x0, cy = y0
+  const val = isEraser ? 0 : currentColorIndex  // 0 = white/erase, 1–9 = color index
+  while (true) {
+    // stamp a square of pixels for brush size
+    for (let bx = -Math.floor(r); bx <= Math.floor(r); bx++) {
+      for (let by = -Math.floor(r); by <= Math.floor(r); by++) {
+        const px = cx + bx, py = cy + by
+        if (px >= 0 && px < 640 && py >= 0 && py < 480) {
+          ws.send(JSON.stringify({ pixel: [px, py, val] }))
+        }
+      }
+    }
+    if (cx === x1 && cy === y1) break
+    const e2 = 2 * err
+    if (e2 > -dy) { err -= dy; cx += sx }
+    if (e2 <  dx) { err += dx; cy += sy }
+  }
+}
+
+canvas.addEventListener("mousedown", e => {
+  isDrawing = true
+  const { x, y } = getPos(e)
+  lastX = x; lastY = y
+  paintDot(x, y)
+})
+
+canvas.addEventListener("mousemove", e => {
+  if (!isDrawing) return
+  const { x, y } = getPos(e)
+  paintLine(lastX, lastY, x, y)
+  lastX = x; lastY = y
+})
+
+window.addEventListener("mouseup", () => {
+  isDrawing = false
+  lastX = null; lastY = null
+})
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault()
+  isDrawing = true
+  const { x, y } = getPos(e)
+  lastX = x; lastY = y
+  paintDot(x, y)
+}, { passive: false })
+
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault()
+  if (!isDrawing) return
+  const { x, y } = getPos(e)
+  paintLine(lastX, lastY, x, y)
+  lastX = x; lastY = y
+}, { passive: false })
+
+canvas.addEventListener("touchend", () => {
+  isDrawing = false
+  lastX = null; lastY = null
+})
+</script>
+</body>
+</html>
